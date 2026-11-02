@@ -16,15 +16,24 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
   """
   periodos = df["T(s)"]
 
+  # Color base azul corporativo del logotipo de CREO
+  color_azul_base = "#2A75D3"
+
   # --- GRÁFICA 1: Profundidad Intermedia ---
   plt.figure(figsize=(9, 6))
-  for base in nombres_prof:
-    plt.plot(periodos, df[base], label=base, linewidth=1.5)
-  plt.title(
-      "Espectros SRSS - Profundidad Intermedia",
-      fontsize=12,
-      fontweight="bold",
-  )
+
+  for i,base in enumerate(nombres_prof):
+# Variar la transparencia (alpha) desde 0.3 (más claro) hasta 0.7 (más visible)
+    opacidad = 0.3 + (0.4 * i / max(1, len(nombres_prof) - 1))
+    plt.plot(periodos,df[base], label=base,
+      color=color_azul_base, linewidth=1.5, 
+      alpha=opacidad, linestyle="-")
+  # LÍNEA PARA EL PROMEDIO:
+  plt.plot(periodos,df["Promedio_ProfIntermedia"],label="PROMEDIO",
+    color="black",linewidth=2.5,linestyle="--",alpha=0.9)
+  
+  plt.title("Espectros - Profundidad Intermedia",
+      fontsize=12,fontweight="bold",)
   plt.xlabel("Periodo T (s)", fontsize=10)
   plt.ylabel("Aceleración Espectral SRSS (g)", fontsize=10)
   plt.grid(True, linestyle="--", alpha=0.6)
@@ -35,9 +44,32 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
 
   # --- GRÁFICA 2: Subducción ---
   plt.figure(figsize=(9, 6))
-  for base in nombres_sub:
-    plt.plot(periodos, df[base], label=base, linewidth=1.5)
-  plt.title("Espectros SRSS - Subducción", fontsize=12, fontweight="bold")
+
+  for i, base in enumerate(nombres_sub):
+    opacidad = 0.35 + (0.55 * i / max(1, len(nombres_sub) - 1))
+    plt.plot(
+        periodos,
+        df[base],
+        label=base,
+        color=color_azul_base,
+        alpha=opacidad,
+        linewidth=1.6,
+        linestyle="-",
+    )
+
+  # Graficar el promedio resaltado
+  plt.plot(
+      periodos,
+      df["Promedio_Subduccion"],
+      label="PROMEDIO",
+      color="#0B1A2E",
+      linewidth=2.5,
+      linestyle="--",
+  )
+
+  plt.title(
+      "Espectros SRSS y Promedio - Subducción", fontsize=12, fontweight="bold"
+  )
   plt.xlabel("Periodo T (s)", fontsize=10)
   plt.ylabel("Aceleración Espectral SRSS (g)", fontsize=10)
   plt.grid(True, linestyle="--", alpha=0.6)
@@ -147,6 +179,13 @@ if periodos:
     c2 = df_final[f"{base}_C2"]
     # Fórmula SRSS: Raíz de la suma de cuadrados
     df_final[base] = np.sqrt(c1**2 + c2**2)
+
+# 4. Calcular y agregar los Espectros Promedio solicitados
+  df_final["Promedio_ProfIntermedia"] = df_final[nombres_prof].mean(axis=1)
+  df_final["Promedio_Subduccion"] = df_final[nombres_sub].mean(axis=1)
+  df_final["Promedio_General"] = df_final[nombres_prof + nombres_sub].mean(
+      axis=1
+  )
 
   # Generar las dos gráficas solicitadas
   generar_graficas_espectros(df_final, nombres_prof, nombres_sub)
