@@ -13,7 +13,7 @@ def butter_bandpass(lowcut, highcut, fs, order=4):
     return sos
 
 def ventana_tukey_manual(N, alpha=0.1):
-    """Genera una ventana de Tukey (taper) de forma independiente para evitar errores de importación."""
+    """Genera una ventana de Tukey (taper) de forma independiente."""
     window = np.ones(N)
     if alpha <= 0:
         return window
@@ -22,47 +22,10 @@ def ventana_tukey_manual(N, alpha=0.1):
     width = int(alpha * (N - 1) / 2)
     
     if width > 0:
-        # Inicio de la ventana
         window[:width+1] = 0.5 * (1 + np.cos(np.pi * (2 * n[:width+1] / (alpha * (N - 1)) - 1)))
-        # Final de la ventana
         window[N-width-1:] = 0.5 * (1 + np.cos(np.pi * (2 * (n[N-width-1:] - N + 1) / (alpha * (N - 1)) + 1)))
         
     return window
-
-def aplicar_filtro_y_recorte(data, dt, f_min, f_max, order, taper_pct, ia_inf, ia_sup):
-    """Aplica taper, filtro pasabanda Butterworth de fase cero y recorte basado en Intensidad de Arias."""
-    n_puntos = len(data)
-    
-    # 1. Aplicar Taper (ventana de Tukey) en los extremos
-    alpha = 2.0 * (taper_pct / 100.0)
-    window = ventana_tukey_manual(n_puntos, alpha=alpha)
-    data_tapered = data * window
-    
-    # 2. Filtrado pasabanda
-    fs = 1.0 / dt
-    sos = butter_bandpass(f_min, f_max, fs, order=order)
-    data_filtered = sosfiltfilt(sos, data_tapered)
-    
-    # 3. Cálculo de la Intensidad de Arias para el recorte
-    g = 981.0  # cm/s^2 (asumiendo aceleraciones en cm/s^2)
-    acc_cuadrada = data_filtered ** 2
-    ia_acumulada = (np.pi / (2.0 * g)) * np.cumsum(acc_cuadrada) * dt
-    ia_total = ia_acumulada[-1]
-    
-    if ia_total > 0:
-        ia_norm = ia_acumulada / ia_total
-        idx_ini = np.argmax(ia_norm >= (ia_inf / 100.0))
-        idx_fin = np.argmax(ia_norm >= (ia_sup / 100.0))
-        if idx_fin <= idx_ini:
-            idx_fin = n_puntos - 1
-    else:
-        idx_ini, idx_fin = 0, n_puntos - 1
-        
-    # Recortar la señal y ajustar el vector de tiempo correspondiente
-    recorte_acc = data_filtered[idx_ini:idx_fin + 1]
-    tiempo_recortado = np.arange(len(recorte_acc)) * dt
-    
-    return tiempo_recortado, recorte_acc
 
 def procesar_y_filtrar_acelerogramas():
     # Carpetas de salida
@@ -133,6 +96,7 @@ def procesar_y_filtrar_acelerogramas():
             
         n_puntos = datos.shape[0]
         tiempo_orig = np.arange(n_puntos) * dt
+        fs = 1.0 / dt
         
         h1 = datos[:, 0]
         h2 = datos[:, 1]
@@ -146,24 +110,49 @@ def procesar_y_filtrar_acelerogramas():
         np.savetxt(archivo_h1_crudo, np.column_stack((tiempo_orig, h1)), fmt="%.6e", delimiter="\t", header=header_crudo, comments="")
         np.savetxt(archivo_h2_crudo, np.column_stack((tiempo_orig, h2)), fmt="%.6e", delimiter="\t", header=header_crudo, comments="")
         
-        # 2. Aplicar filtrado, taper y recorte por Intensidad de Arias para H1 y H2
-        t_h1_filt, h1_filtrado = aplicar_filtro_y_recorte(h1, dt, F_MIN, F_MAX, ORDEN_FILTRO, TAPER_PCT, IA_INF, IA_SUP)
-        t_h2_filt, h2_filtrado = aplicar_filtro_y_recorte(h2, dt, F_MIN, F_MAX, ORDEN_FILTRO, TAPER_PCT, IA_INF, IA_SUP)
+        # 2. Aplicar Taper y Filtro Pasabanda a ambas componentes de forma independiente
+        alpha = 2.0 * (TAPER_PCT / 100.0)
+        window = ventana_tukey_manual(n_puntos, alpha=alpha)
+        sos = butter_bandpass(F_MIN, F_MAX, fs, order=ORDEN_FILTRO)
+        
+        h1_filt = sosfiltfilt(sos, h1 * window)
+        h2_filt = sosfiltfilt(sos, h2 * window)
+        
+        # 3. Calcular la Intensidad de Arias COMBINADA para sincronizar el recorte
+        g = 981.0  # cm/s^2
+        ia_h1 = (np.pi / (2.0 * g)) * np.cumsum(h1_filt ** 2) * dt
+        ia_h2 = (np.pi / (2.0 * g)) * np.cumsum(h2_filt ** 2) * dt
+        ia_combinada = ia_h1 + ia_h2  # Energía total acumulada en 2D
+        ia_total = ia_combinada[-1]
+        
+        if ia_total > 0:
+            ia_norm = ia_combinada / ia_total
+            idx_ini = np.argmax(ia_norm >= (IA_INF / 100.0))
+            idx_fin = np.argmax(ia_norm >= (IA_SUP / 100.0))
+            if idx_fin <= idx_ini:
+                idx_fin = n_puntos - 1
+        else:
+            idx_ini, idx_fin = 0, n_puntos - 1
+            
+        # 4. Aplicar los MISMOS índices de recorte a H1 y H2 (Garantiza cero desfase y misma duración)
+        h1_recortado = h1_filt[idx_ini:idx_fin + 1]
+        h2_recortado = h2_filt[idx_ini:idx_fin + 1]
+        tiempo_recortado = np.arange(len(h1_recortado)) * dt
         
         # Guardar en la carpeta "Acelerogramas_filtrados"
         archivo_h1_filt = os.path.join(output_folder_filtrados, f"{base_name}_H1_filtrado.txt")
         archivo_h2_filt = os.path.join(output_folder_filtrados, f"{base_name}_H2_filtrado.txt")
         
-        header_filt = f"Tiempo(s)\tAceleracion_Filtrada(cm/s^2) [Taper:{TAPER_PCT}%, Filtro:{F_MIN}-{F_MAX}Hz, Polos:{ORDEN_FILTRO}, Arias:{IA_INF}%-{IA_SUP}%]"
-        np.savetxt(archivo_h1_filt, np.column_stack((t_h1_filt, h1_filtrado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
-        np.savetxt(archivo_h2_filt, np.column_stack((t_h2_filt, h2_filtrado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
+        header_filt = f"Tiempo(s)\tAceleracion_Filtrada(cm/s^2) [Taper:{TAPER_PCT}%, Filtro:{F_MIN}-{F_MAX}Hz, Arias Combinada:{IA_INF}%-{IA_SUP}%]"
+        np.savetxt(archivo_h1_filt, np.column_stack((tiempo_recortado, h1_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
+        np.savetxt(archivo_h2_filt, np.column_stack((tiempo_recortado, h2_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
         
-        print(f"[OK] Procesado: {nombre_archivo} -> Filtrado y Recortado (Arias {IA_INF}%-{IA_SUP}%)")
+        print(f"[OK] Sincronizado y Procesado: {nombre_archivo} -> Duración: {tiempo_recortado[-1]:.2f}s (Puntos: {len(tiempo_recortado)})")
         archivos_procesados += 1
 
-    print(f"\n¡Proceso completado! Se procesaron {archivos_procesados} archivos.")
+    print(f"\n¡Proceso completado! Se procesaron {archivos_procesados} archivos de forma sincronizada.")
     print(f" - Crudos: '{output_folder_crudos}/'")
-    print(f" - Filtrados y Recortados: '{output_folder_filtrados}/'")
+    print(f" - Filtrados y Sincronizados: '{output_folder_filtrados}/'")
 
 if __name__ == "__main__":
     procesar_y_filtrar_acelerogramas()
