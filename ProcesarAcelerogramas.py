@@ -1,5 +1,7 @@
 import os
+import uuid
 import numpy as np
+import pandas as pd
 from scipy.signal import butter, sosfiltfilt
 
 def butter_bandpass(lowcut, highcut, fs, order=4):
@@ -49,6 +51,7 @@ def procesar_y_filtrar_acelerogramas():
     lista_archivos = archivos_prof_intermedia + archivos_subduccion
     
     archivos_procesados = 0
+    registros_para_excel = []
     
     for nombre_archivo in lista_archivos:
         if not os.path.exists(nombre_archivo):
@@ -138,6 +141,10 @@ def procesar_y_filtrar_acelerogramas():
         h1_recortado = h1_filt[idx_ini:idx_fin + 1]
         h2_recortado = h2_filt[idx_ini:idx_fin + 1]
         tiempo_recortado = np.arange(len(h1_recortado)) * dt
+
+# Nombres de las funciones para ETABS (igual al formato de la imagen)
+        func_name_h1 = f"{base_name}__H1_filtrado"
+        func_name_h2 = f"{base_name}__H2_filtrado"
         
         # Guardar en la carpeta "Acelerogramas_filtrados"
         archivo_h1_filt = os.path.join(output_folder_filtrados, f"{base_name}_H1_filtrado.txt")
@@ -146,13 +153,42 @@ def procesar_y_filtrar_acelerogramas():
         header_filt = f"Tiempo(s)\tAceleracion_Filtrada(cm/s^2) [Taper:{TAPER_PCT}%, Filtro:{F_MIN}-{F_MAX}Hz, Arias Combinada:{IA_INF}%-{IA_SUP}%]"
         np.savetxt(archivo_h1_filt, np.column_stack((tiempo_recortado, h1_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
         np.savetxt(archivo_h2_filt, np.column_stack((tiempo_recortado, h2_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
-        
+
+# 5. Crear registros en formato ETABS para la exportación a Excel
+        for func_name, acc_values in [(func_name_h1, h1_recortado), (func_name_h2, h2_recortado)]:
+            guid_list = [""] * len(acc_values)
+            guid_list[0] = str(uuid.uuid4())  # Generar GUID en la primera fila de la función
+
+            df_func = pd.DataFrame({
+                'Name': func_name,
+                'Time sec': tiempo_recortado,
+                'Value': acc_values,
+                'GUID': guid_list
+            })
+            registros_para_excel.append(df_func)   
+
         print(f"[OK] Sincronizado y Procesado: {nombre_archivo} -> Duración: {tiempo_recortado[-1]:.2f}s (Puntos: {len(tiempo_recortado)})")
         archivos_procesados += 1
+
+        # Generar el archivo de Excel con el formato de ETABS
+    if registros_para_excel:
+        exportar_a_excel_etabs(registros_para_excel, output_folder_filtrados)
 
     print(f"\n¡Proceso completado! Se procesaron {archivos_procesados} archivos de forma sincronizada.")
     print(f" - Crudos: '{output_folder_crudos}/'")
     print(f" - Filtrados y Sincronizados: '{output_folder_filtrados}/'")
+
+def exportar_a_excel_etabs(lista_dfs,output_folder):
+    excel_filename = "Acelerogramas_ETABS_Format.xlsx"
+    excel_path = os.path.join(output_folder, excel_filename)
+    df_consolidado = pd.concat(lista_dfs, ignore_index=True)
+    
+    with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+        # 1. Hoja Consolidada (Ideal para copiar y pegar todo de un solo paso en ETABS)
+        df_export.to_excel(writer, sheet_name="ETABS_Consolidado", index=False)
+        
+    print(f"[EXCEL OK] Archivo generado exitosamente: '{excel_path}' (Listo para copiar y pegar a ETABS)")
+
 
 if __name__ == "__main__":
     procesar_y_filtrar_acelerogramas()
