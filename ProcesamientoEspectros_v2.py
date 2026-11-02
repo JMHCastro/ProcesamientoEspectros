@@ -16,8 +16,8 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
   """
   periodos = df["T(s)"]
 
-  # Color base azul corporativo del logotipo de CREO
-  color_azul_base = "#2A75D3"
+  # Color gris para las curvas de los espectros
+  color_azul_base ="gray"
 
   # --- GRÁFICA 1: Profundidad Intermedia ---
   plt.figure(figsize=(9, 6))
@@ -31,6 +31,24 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
   # LÍNEA PARA EL PROMEDIO:
   plt.plot(periodos,df["Promedio_ProfIntermedia"],label="PROMEDIO",
     color="black",linewidth=2.5,linestyle="--",alpha=0.9)
+
+  # ESPECTROS EPU Y DISEÑO EN ROJO:
+  if "EPU" in df.columns:
+    plt.plot(
+        periodos,
+        df["EPU"],
+        label="EPU",
+        color="#D63031",
+        linewidth=2.0,
+        linestyle="-",)
+  if "Elastico" in df.columns:
+    plt.plot(
+        periodos,
+        df["Elastico"],
+        label="Elástico",
+        color="#D63031",
+        linewidth=2.0,
+        linestyle=":",)
   
   plt.title("Espectros - Profundidad Intermedia",
       fontsize=12,fontweight="bold",)
@@ -66,6 +84,25 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
       linewidth=2.5,
       linestyle="--",
   )
+  # ESPECTROS DE DISEÑO EN ROJO:
+  if "EPU" in df.columns:
+    plt.plot(
+        periodos,
+        df["EPU"],
+        label="EPU",
+        color="#D63031",
+        linewidth=2.0,
+        linestyle="-",
+    )
+  if "Elastico" in df.columns:
+    plt.plot(
+        periodos,
+        df["Elastico"],
+        label="Elástico",
+        color="#D63031",
+        linewidth=2.0,
+        linestyle=":",
+    )
 
   plt.title(
       "Espectros SRSS y Promedio - Subducción", fontsize=12, fontweight="bold"
@@ -186,6 +223,39 @@ if periodos:
   df_final["Promedio_General"] = df_final[nombres_prof + nombres_sub].mean(
       axis=1
   )
+
+# ==========================================
+  # 5. PROCESAMIENTO DEL ESPECTRO DE DISEÑO (EPU y Elástico)
+  # ==========================================
+  archivo_diseno = "EspectrosDis443.txt"
+  if os.path.exists(archivo_diseno):
+    with open(archivo_diseno, "r", encoding="utf-8", errors="ignore") as f:
+      lineas_dis = f.readlines()
+
+    t_dis, epu_dis, elastico_dis = [], [], []
+    for linea in lineas_dis:
+      partes = linea.split()
+      if len(partes) >= 3:
+        try:
+          t = float(partes[0])
+          epu = float(partes[1]) / g  # Convertir de gals a fracción de g
+          elast = float(partes[2]) / g  # Convertir de gals a fracción de g
+
+          t_dis.append(t)
+          epu_dis.append(epu)
+          elastico_dis.append(elast)
+        except ValueError:
+          continue  # Salta encabezados de texto si existen
+
+    if t_dis:
+      # Interpolación lineal para alinear los periodos del archivo de diseño con los periodos base
+      df_final["EPU"] = np.interp(periodos, t_dis, epu_dis)
+      df_final["Elastico"] = np.interp(periodos, t_dis, elastico_dis)
+    else:
+      print(f"Advertencia: No se pudieron extraer datos de {archivo_diseno}")
+  else:
+    print(f"Advertencia: No se encontró el archivo '{archivo_diseno}'")  
+
 
   # Generar las dos gráficas solicitadas
   generar_graficas_espectros(df_final, nombres_prof, nombres_sub)
