@@ -2,6 +2,7 @@ import os
 import uuid
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.signal import butter, sosfiltfilt
 
 def butter_bandpass(lowcut, highcut, fs, order=4):
@@ -28,6 +29,30 @@ def ventana_tukey_manual(N, alpha=0.1):
         window[N-width-1:] = 0.5 * (1 + np.cos(np.pi * (2 * (n[N-width-1:] - N + 1) / (alpha * (N - 1)) + 1)))
         
     return window
+
+def guardar_grafica_comparativa(tiempo_orig, acc_orig, tiempo_filt, acc_filt, nombre_canal, output_folder):
+    """Genera y guarda una imagen comparativa entre la señal cruda y la filtrada/recortada."""
+    plt.figure(figsize=(10, 5))
+    
+    # Graficar señal cruda en gris/azul tenue
+    plt.plot(tiempo_orig, acc_orig, color='gray', alpha=0.6, label='Crudo (Original)', linewidth=0.8)
+    
+    # Graficar señal filtrada y recortada en azul fuerte
+    plt.plot(tiempo_filt, acc_filt, color='#1f77b4', alpha=0.9, label='Filtrado y Sincronizado', linewidth=1.0)
+    
+    plt.title(f"Comparativa de Acelerograma: {nombre_canal}", fontsize=12, fontweight='bold')
+    plt.xlabel("Tiempo (s)", fontsize=10)
+    plt.ylabel("Aceleración ($cm/s^2$)", fontsize=10)
+    plt.axhline(0, color='black', linewidth=0.5, linestyle='--')
+    plt.legend(loc='upper right', frameon=True)
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+    
+    # Guardar imagen en la carpeta de filtrados
+    img_filename = f"{nombre_canal}_comparativa.png"
+    img_path = os.path.join(output_folder, img_filename)
+    plt.savefig(img_path, dpi=300)
+    plt.close()
 
 def procesar_y_filtrar_acelerogramas():
     # Carpetas de salida
@@ -154,6 +179,10 @@ def procesar_y_filtrar_acelerogramas():
         np.savetxt(archivo_h1_filt, np.column_stack((tiempo_recortado, h1_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
         np.savetxt(archivo_h2_filt, np.column_stack((tiempo_recortado, h2_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
 
+#  Generar gráficas comparativas PNG para H1 y H2
+        guardar_grafica_comparativa(tiempo_orig, h1, tiempo_recortado, h1_recortado, func_name_h1, output_folder_filtrados)
+        guardar_grafica_comparativa(tiempo_orig, h2, tiempo_recortado, h2_recortado, func_name_h2, output_folder_filtrados)
+
 # 5. Crear registros en formato ETABS para la exportación a Excel
         for func_name, acc_values in [(func_name_h1, h1_recortado), (func_name_h2, h2_recortado)]:
             guid_list = [""] * len(acc_values)
@@ -185,8 +214,8 @@ def exportar_a_excel_etabs(lista_dfs,output_folder):
     
     with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
         # 1. Hoja Consolidada (Ideal para copiar y pegar todo de un solo paso en ETABS)
-        df_export.to_excel(writer, sheet_name="ETABS_Consolidado", index=False)
-        
+        df_consolidado.to_excel(writer, sheet_name="ETABS_Consolidado", index=False)      
+
     print(f"[EXCEL OK] Archivo generado exitosamente: '{excel_path}' (Listo para copiar y pegar a ETABS)")
 
 
