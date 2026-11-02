@@ -11,9 +11,9 @@ import pandas as pd
 def generar_graficas_espectros(df, nombres_prof, nombres_sub):
   """Genera dos gráficas independientes:
 
-  1. Profundidad Intermedia (SRSS)
-  2. Subducción (SRSS)
-  """
+  1. Profundidad Intermedia (SRSS, Envolvente, Envolvente Escalada y Diseño)
+  2. Subducción (SRSS, Envolvente, Envolvente Escalada y Diseño)"""
+  
   periodos = df["T(s)"]
 
   # Color gris para las curvas de los espectros
@@ -28,9 +28,19 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
     plt.plot(periodos,df[base], label=base,
       color=color_azul_base, linewidth=1.5, 
       alpha=opacidad, linestyle="-")
-  # LÍNEA PARA EL PROMEDIO:
-  plt.plot(periodos,df["Promedio_ProfIntermedia"],label="PROMEDIO",
+  # LÍNEA PARA LA ENVOLVENTE BASE:
+  plt.plot(periodos,df["Envolvente_ProfIntermedia"],label="Envolvente Prof.Intermedia",
     color="black",linewidth=2.5,linestyle="--",alpha=0.9)
+
+# ENVOLVENTE ESCALADA (Factor 1.6):
+  plt.plot(
+      periodos,
+      df["EnvolventeEscalada_ProfIntermedia"],
+      label=f"ENVOLVENTE x {FACTOR_PROF}",
+      color="#2d3436",
+      linewidth=2.5,
+      linestyle="-",
+  )
 
   # ESPECTROS EPU Y DISEÑO EN ROJO:
   if "EPU" in df.columns:
@@ -75,15 +85,26 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
         linestyle="-",
     )
 
-  # Graficar el promedio resaltado
+  # Graficar la envolvente base de Subducción en línea negra punteada
   plt.plot(
       periodos,
-      df["Promedio_Subduccion"],
-      label="PROMEDIO",
+      df["Envolvente_Subduccion"],
+      label="Envolvente Subducción",
       color="#0B1A2E",
       linewidth=2.5,
       linestyle="--",
   )
+
+# ENVOLVENTE ESCALADA (Factor 1.05):
+  plt.plot(
+      periodos,
+      df["EnvolventeEscalada_Subduccion"],
+      label=f"ENVOLVENTE x {FACTOR_SUB}",
+      color="#2d3436",
+      linewidth=2.5,
+      linestyle="-",
+  )
+
   # ESPECTROS DE DISEÑO EN ROJO:
   if "EPU" in df.columns:
     plt.plot(
@@ -105,7 +126,7 @@ def generar_graficas_espectros(df, nombres_prof, nombres_sub):
     )
 
   plt.title(
-      "Espectros SRSS y Promedio - Subducción", fontsize=12, fontweight="bold"
+      "Espectros SRSS y Envolvente - Subducción", fontsize=12, fontweight="bold"
   )
   plt.xlabel("Periodo T (s)", fontsize=10)
   plt.ylabel("Aceleración Espectral SRSS (g)", fontsize=10)
@@ -139,6 +160,10 @@ archivos_txt = [
 # Unidades: True para dividir entre g = 981 cm/s^2
 dividir_entre_g = True
 g = 981.0
+
+# Única definición de los factores de escala
+FACTOR_PROF = 1.6
+FACTOR_SUB = 1.05
 
 datos_consolidados = {}
 periodos = None
@@ -193,8 +218,8 @@ for archivo in archivos_txt:
   datos_consolidados[f"{nombre_base}_C2"] = h2_vals
 
 # ==========================================
-# 4. REORDENAMIENTO Y CÁLCULO SRSS
-# ==========================================
+# 4. CÁLCULO SRSS, ENVOLVENTES Y ESCALAMIENTO#
+#  ==========================================
 if periodos:
   # Separar bases por categoría
   nombres_prof = [b for b in nombres_bases if "ProfIntermedia" in b]
@@ -214,15 +239,20 @@ if periodos:
   for base in nombres_prof + nombres_sub:
     c1 = df_final[f"{base}_C1"]
     c2 = df_final[f"{base}_C2"]
-    # Fórmula SRSS: Raíz de la suma de cuadrados
-    df_final[base] = np.sqrt(c1**2 + c2**2)
+   # Fórmula SRSS correcta según NTC 2023: sqrt((C1^2 + C2^2) / 2)
+    df_final[base] = np.sqrt((c1**2 + c2**2)/2.0)
 
-# 4. Calcular y agregar los Espectros Promedio solicitados
-  df_final["Promedio_ProfIntermedia"] = df_final[nombres_prof].mean(axis=1)
-  df_final["Promedio_Subduccion"] = df_final[nombres_sub].mean(axis=1)
-  df_final["Promedio_General"] = df_final[nombres_prof + nombres_sub].mean(
-      axis=1
-  )
+# 4. Calcular y agregar los Espectros Envolvente BASE
+  df_final["Envolvente_ProfIntermedia"] = df_final[nombres_prof].max(axis=1)
+  df_final["Envolvente_Subduccion"] = df_final[nombres_sub].max(axis=1)
+  df_final["Envolvente_General"] = df_final[nombres_prof + nombres_sub].max(axis=1)
+
+# Envolventes escaladas por los factores indicados
+  df_final["EnvolventeEscalada_ProfIntermedia"] = (
+      df_final["Envolvente_ProfIntermedia"] * FACTOR_PROF)
+  df_final["EnvolventeEscalada_Subduccion"] = (
+      df_final["Envolvente_Subduccion"] * FACTOR_SUB)
+
 
 # ==========================================
   # 5. PROCESAMIENTO DEL ESPECTRO DE DISEÑO (EPU y Elástico)
@@ -257,7 +287,9 @@ if periodos:
     print(f"Advertencia: No se encontró el archivo '{archivo_diseno}'")  
 
 
-  # Generar las dos gráficas solicitadas
+  # ==========================================
+  # 6. GENERACIÓN DE GRÁFICAS Y EXPORTACIÓN
+  # ==========================================  
   generar_graficas_espectros(df_final, nombres_prof, nombres_sub)
 
   # Exportar a TXT para copiar a Excel
