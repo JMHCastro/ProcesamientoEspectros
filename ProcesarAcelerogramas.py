@@ -1,4 +1,5 @@
 import os
+import glob
 import uuid
 import numpy as np
 import pandas as pd
@@ -33,13 +34,8 @@ def ventana_tukey_manual(N, alpha=0.1):
 def guardar_grafica_comparativa(tiempo_orig, acc_orig, tiempo_filt, acc_filt, nombre_canal, output_folder):
     """Genera y guarda una imagen comparativa entre la señal cruda y la filtrada/recortada."""
     plt.figure(figsize=(10, 5))
-    
-    # Graficar señal cruda en gris/azul tenue
     plt.plot(tiempo_orig, acc_orig, color='gray', alpha=0.6, label='Crudo (Original)', linewidth=0.8)
-    
-    # Graficar señal filtrada y recortada en azul fuerte
     plt.plot(tiempo_filt, acc_filt, color='#1f77b4', alpha=0.9, label='Filtrado y Sincronizado', linewidth=1.0)
-    
     plt.title(f"Comparativa de Acelerograma: {nombre_canal}", fontsize=12, fontweight='bold')
     plt.xlabel("Tiempo (s)", fontsize=10)
     plt.ylabel("Aceleración ($cm/s^2$)", fontsize=10)
@@ -48,42 +44,44 @@ def guardar_grafica_comparativa(tiempo_orig, acc_orig, tiempo_filt, acc_filt, no
     plt.grid(True, linestyle=':', alpha=0.6)
     plt.tight_layout()
     
-    # Guardar imagen en la carpeta de filtrados
     img_filename = f"{nombre_canal}_comparativa.png"
     img_path = os.path.join(output_folder, img_filename)
     plt.savefig(img_path, dpi=300)
     plt.close()
 
 def procesar_y_filtrar_acelerogramas():
-    # Carpetas de salida
     output_folder_crudos = "Acelerogramas"
     output_folder_filtrados = "Acelerogramas_filtrados"
     
     os.makedirs(output_folder_crudos, exist_ok=True)
     os.makedirs(output_folder_filtrados, exist_ok=True)
     
-    # Parámetros extraídos de la tabla
-    TAPER_PCT = 5.0        # Taper en %
-    F_MIN = 0.1            # Frecuencia mínima (Hz)
-    F_MAX = 20.0           # Frecuencia máxima (Hz)
-    ORDEN_FILTRO = 4       # Polos utilizados en el filtro
-    IA_INF = 0.01          # Límite inferior intensidad de Arias (%)
-    IA_SUP = 99.90         # Límite superior intensidad de Arias (%)
+    # LIMPIEZA INICIAL: Borrar archivos residuales anteriores en 'Acelerogramas_filtrados' para evitar duplicidades
+    for archivo_viejo in glob.glob(os.path.join(output_folder_filtrados, "*.*")):
+        try:
+            os.remove(archivo_viejo)
+        except Exception:
+            pass
+            
+    TAPER_PCT = 5.0
+    F_MIN = 0.1
+    F_MAX = 20.0
+    ORDEN_FILTRO = 4
+    IA_INF = 0.01
+    IA_SUP = 99.90
     
-    # Definir los nombres de los archivos
     archivos_prof_intermedia = [f"Acelerograma_ProfIntermedia_{i}_.txt" for i in range(1, 5)]
     archivos_subduccion = [f"Acelerograma_Subduccion_{i}_.txt" for i in range(1, 9)]
     lista_archivos = archivos_prof_intermedia + archivos_subduccion
     
     archivos_procesados = 0
-    registros_para_excel = []
     
     for nombre_archivo in lista_archivos:
         if not os.path.exists(nombre_archivo):
             print(f"[AVISO] No se encontró el archivo: {nombre_archivo}. Se omitirá.")
             continue
             
-        dt = 0.01  # Valor predeterminado
+        dt = 0.01
         skip_lines = 0
         
         with open(nombre_archivo, 'r', encoding='utf-8', errors='ignore') as f:
@@ -119,7 +117,6 @@ def procesar_y_filtrar_acelerogramas():
             continue
             
         if datos.ndim != 2 or datos.shape[1] < 2:
-            print(f"[AVISO] El archivo {nombre_archivo} no tiene al menos dos columnas.")
             continue
             
         n_puntos = datos.shape[0]
@@ -129,8 +126,9 @@ def procesar_y_filtrar_acelerogramas():
         h1 = datos[:, 0]
         h2 = datos[:, 1]
         
-        # 1. Guardar archivos crudos originales separados por canal
         base_name = os.path.splitext(nombre_archivo)[0]
+        
+        # 1. Guardar archivos crudos originales separados por canal
         archivo_h1_crudo = os.path.join(output_folder_crudos, f"{base_name}_H1.txt")
         archivo_h2_crudo = os.path.join(output_folder_crudos, f"{base_name}_H2.txt")
         
@@ -138,7 +136,7 @@ def procesar_y_filtrar_acelerogramas():
         np.savetxt(archivo_h1_crudo, np.column_stack((tiempo_orig, h1)), fmt="%.6e", delimiter="\t", header=header_crudo, comments="")
         np.savetxt(archivo_h2_crudo, np.column_stack((tiempo_orig, h2)), fmt="%.6e", delimiter="\t", header=header_crudo, comments="")
         
-        # 2. Aplicar Taper y Filtro Pasabanda a ambas componentes de forma independiente
+        # 2. Aplicar Taper y Filtro Pasabanda
         alpha = 2.0 * (TAPER_PCT / 100.0)
         window = ventana_tukey_manual(n_puntos, alpha=alpha)
         sos = butter_bandpass(F_MIN, F_MAX, fs, order=ORDEN_FILTRO)
@@ -150,7 +148,7 @@ def procesar_y_filtrar_acelerogramas():
         g = 981.0  # cm/s^2
         ia_h1 = (np.pi / (2.0 * g)) * np.cumsum(h1_filt ** 2) * dt
         ia_h2 = (np.pi / (2.0 * g)) * np.cumsum(h2_filt ** 2) * dt
-        ia_combinada = ia_h1 + ia_h2  # Energía total acumulada en 2D
+        ia_combinada = ia_h1 + ia_h2
         ia_total = ia_combinada[-1]
         
         if ia_total > 0:
@@ -162,62 +160,153 @@ def procesar_y_filtrar_acelerogramas():
         else:
             idx_ini, idx_fin = 0, n_puntos - 1
             
-        # 4. Aplicar los MISMOS índices de recorte a H1 y H2 (Garantiza cero desfase y misma duración)
+        # 4. Aplicar los MISMOS índices de recorte a H1 y H2
         h1_recortado = h1_filt[idx_ini:idx_fin + 1]
         h2_recortado = h2_filt[idx_ini:idx_fin + 1]
         tiempo_recortado = np.arange(len(h1_recortado)) * dt
 
-# Nombres de las funciones para ETABS (igual al formato de la imagen)
-        func_name_h1 = f"{base_name}__H1_filtrado"
-        func_name_h2 = f"{base_name}__H2_filtrado"
+        # Nombres de las funciones para ETABS (limpiando guiones bajos extra)
+        clean_base = base_name.rstrip('_')
+        func_name_h1 = f"{clean_base}_H1_filtrado"
+        func_name_h2 = f"{clean_base}_H2_filtrado"
         
         # Guardar en la carpeta "Acelerogramas_filtrados"
-        archivo_h1_filt = os.path.join(output_folder_filtrados, f"{base_name}_H1_filtrado.txt")
-        archivo_h2_filt = os.path.join(output_folder_filtrados, f"{base_name}_H2_filtrado.txt")
+        archivo_h1_filt = os.path.join(output_folder_filtrados, f"{func_name_h1}.txt")
+        archivo_h2_filt = os.path.join(output_folder_filtrados, f"{func_name_h2}.txt")
         
-        header_filt = f"Tiempo(s)\tAceleracion_Filtrada(cm/s^2) [Taper:{TAPER_PCT}%, Filtro:{F_MIN}-{F_MAX}Hz, Arias Combinada:{IA_INF}%-{IA_SUP}%]"
+        header_filt = f"Tiempo(s)\tAceleracion_Filtrada(cm/s^2)"
         np.savetxt(archivo_h1_filt, np.column_stack((tiempo_recortado, h1_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
         np.savetxt(archivo_h2_filt, np.column_stack((tiempo_recortado, h2_recortado)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
 
-#  Generar gráficas comparativas PNG para H1 y H2
+        # Generar gráficas comparativas PNG para H1 y H2
         guardar_grafica_comparativa(tiempo_orig, h1, tiempo_recortado, h1_recortado, func_name_h1, output_folder_filtrados)
         guardar_grafica_comparativa(tiempo_orig, h2, tiempo_recortado, h2_recortado, func_name_h2, output_folder_filtrados)
 
-# 5. Crear registros en formato ETABS para la exportación a Excel
-        for func_name, acc_values in [(func_name_h1, h1_recortado), (func_name_h2, h2_recortado)]:
-            guid_list = [""] * len(acc_values)
-            guid_list[0] = str(uuid.uuid4())  # Generar GUID en la primera fila de la función
-
-            df_func = pd.DataFrame({
-                'Name': func_name,
-                'Time sec': tiempo_recortado,
-                'Value': acc_values,
-                'GUID': guid_list
-            })
-            registros_para_excel.append(df_func)   
-
-        print(f"[OK] Sincronizado y Procesado: {nombre_archivo} -> Duración: {tiempo_recortado[-1]:.2f}s (Puntos: {len(tiempo_recortado)})")
         archivos_procesados += 1
 
-        # Generar el archivo de Excel con el formato de ETABS
-    if registros_para_excel:
-        exportar_a_excel_etabs(registros_para_excel, output_folder_filtrados)
+    print(f"\n[OK] Se procesaron y filtraron {archivos_procesados} acelerogramas correctamente.")
 
-    print(f"\n¡Proceso completado! Se procesaron {archivos_procesados} archivos de forma sincronizada.")
-    print(f" - Crudos: '{output_folder_crudos}/'")
-    print(f" - Filtrados y Sincronizados: '{output_folder_filtrados}/'")
+    # 5. Generar el Excel consolidado limpio
+    try:
+        generar_excel_etabs_completo(output_folder_filtrados)
+    except Exception as e:
+        print(f"\n[ERROR CRÍTICO al generar el Excel de ETABS]: {e}")
 
-def exportar_a_excel_etabs(lista_dfs,output_folder):
-    excel_filename = "Acelerogramas_ETABS_Format.xlsx"
-    excel_path = os.path.join(output_folder, excel_filename)
-    df_consolidado = pd.concat(lista_dfs, ignore_index=True)
+def generar_excel_etabs_completo(folder_filtrados):
+    SF_SUBDUCCION = 1.05
+    SF_PROF_INTERMEDIA = 1.6
+    CONSTANT_DAMPING = 0.02
     
+    excel_path = os.path.join(folder_filtrados, "Acelerogramas_ETABS_Format.xlsx")
+    
+    if os.path.exists(excel_path):
+        try:
+            os.remove(excel_path)
+        except Exception:
+            pass
+            
+    # Obtener únicamente archivos H1 únicos
+    h1_files = sorted(glob.glob(os.path.join(folder_filtrados, "*_H1_filtrado.txt")))
+    
+    if not h1_files:
+        print(f"[AVISO] No se encontraron registros válidos en '{folder_filtrados}'.")
+        return
+        
+    functions_rows = []
+    nonlin_rows = []
+    damping_rows = []
+    
+    print("\n--- Generando Excel Consolidado sin Duplicados ---")
+    for h1_path in h1_files:
+        basename_h1 = os.path.basename(h1_path)
+        base_sismo = basename_h1.replace("_H1_filtrado.txt", "")
+        h2_path = h1_path.replace("_H1_filtrado.txt", "_H2_filtrado.txt")
+        
+        if not os.path.exists(h2_path):
+            continue
+            
+        df_h1 = pd.read_csv(h1_path, sep='\t')
+        df_h2 = pd.read_csv(h2_path, sep='\t')
+        
+        t_h1 = df_h1.iloc[:, 0].values
+        acc_h1 = df_h1.iloc[:, 1].values
+        t_h2 = df_h2.iloc[:, 0].values
+        acc_h2 = df_h2.iloc[:, 1].values
+        
+        num_steps = len(t_h1)
+        dt = round(t_h1[1] - t_h1[0], 4) if num_steps > 1 else 0.01
+        
+        func_name_h1 = f"{base_sismo}_H1_filtrado"
+        func_name_h2 = f"{base_sismo}_H2_filtrado"
+        
+        guid_h1 = str(uuid.uuid4())
+        guid_h2 = str(uuid.uuid4())
+        
+        # Agregar funciones Time History
+        for idx, (t_val, a_val) in enumerate(zip(t_h1, acc_h1)):
+            functions_rows.append({
+                'Name': func_name_h1, 'Time sec': t_val, 'Value': a_val, 'GUID': guid_h1 if idx == 0 else ''
+            })
+            
+        for idx, (t_val, a_val) in enumerate(zip(t_h2, acc_h2)):
+            functions_rows.append({
+                'Name': func_name_h2, 'Time sec': t_val, 'Value': a_val, 'GUID': guid_h2 if idx == 0 else ''
+            })
+            
+        if "Subduccion" in base_sismo:
+            sf = SF_SUBDUCCION
+            case_name = base_sismo.replace("Acelerograma_", "")
+        else:
+            sf = SF_PROF_INTERMEDIA
+            case_name = base_sismo.replace("Acelerograma_", "")
+            
+        guid_case = str(uuid.uuid4())
+        
+        # Exactamente UNA fila para U1 y UNA fila para U2 por cada caso de sismo
+        nonlin_rows.append({
+            'Name': case_name, 'Initial Condition': 'Nonlinear Case', 'Nonlinear Case': 'P_Sis-NL',
+            'Load Type': 'Accel', 'Load Name': 'U1', 'Function': func_name_h1,
+            'Load SF': None, 'Trans Accel SF': sf, 'Rot Accel SF': None, 'Time Factor': 1,
+            'Arrival Time': 0, 'Angle': 0, 'Modal Case': 'Modal-Ritz', 'Motion Type': 'Transient',
+            'Number Steps': num_steps, 'Step Size': dt, 'Static Period': 0, 'Max Substep': 0,
+            'Min Substep': 0, 'Force Tolerance': 0.0005, 'Energy Tolerance': 0.0005,
+            'Max Iterations': 100, 'Min Iterations': 2, 'Convergence Factor': 1,
+            'Design Type': 'Program Determined', 'User Design Type': None, 'GUID': guid_case, 'Notes': None
+        })
+        
+        nonlin_rows.append({
+            'Name': case_name, 'Initial Condition': None, 'Nonlinear Case': None,
+            'Load Type': 'Accel', 'Load Name': 'U2', 'Function': func_name_h2,
+            'Load SF': None, 'Trans Accel SF': sf, 'Rot Accel SF': None, 'Time Factor': 1,
+            'Arrival Time': 0, 'Angle': 0, 'Modal Case': None, 'Motion Type': None,
+            'Number Steps': None, 'Step Size': None, 'Static Period': None, 'Max Substep': None,
+            'Min Substep': None, 'Force Tolerance': None, 'Energy Tolerance': None,
+            'Max Iterations': None, 'Min Iterations': None, 'Convergence Factor': None,
+            'Design Type': None, 'User Design Type': None, 'GUID': None, 'Notes': None
+        })
+        
+        # Amortiguamiento modal (modos 1, 2 y 3)
+        for mode_idx in [1, 2, 3]:
+            damping_rows.append({
+                'Name': case_name,
+                'Consider Max Freq?': None, 'Max Frequency': None,
+                'Damping Type': 'Constant' if mode_idx == 1 else None,
+                'Constant Damping': CONSTANT_DAMPING if mode_idx == 1 else None,
+                'Interpolated By': None, 'Interpolated Time Value': None, 'Interpolated Damping': None,
+                'Proportional By': None, 'Mass Coefficient': None, 'Stiffness Coefficient': None,
+                'Proportional Time Value 1': None, 'Proportional Damping 1': None,
+                'Proportional Time Value 2': None, 'Proportional Damping 2': None,
+                'Mode For Ratio': None,
+                'Overwrite Mode': mode_idx,
+                'Overwrite Damping': 0.00001
+            })
+
     with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-        # 1. Hoja Consolidada (Ideal para copiar y pegar todo de un solo paso en ETABS)
-        df_consolidado.to_excel(writer, sheet_name="ETABS_Consolidado", index=False)      
-
-    print(f"[EXCEL OK] Archivo generado exitosamente: '{excel_path}' (Listo para copiar y pegar a ETABS)")
-
+        pd.DataFrame(functions_rows).to_excel(writer, sheet_name="Functions - Time History", index=False)
+        pd.DataFrame(nonlin_rows).to_excel(writer, sheet_name="Load Cases - TH - Nonlin Modal", index=False)
+        pd.DataFrame(damping_rows).to_excel(writer, sheet_name="Load Cases - Damping - Modal", index=False)
+        
+    print(f"\n[EXCEL OK] Archivo consolidado sin duplicados guardado en: '{excel_path}'")
 
 if __name__ == "__main__":
     procesar_y_filtrar_acelerogramas()
