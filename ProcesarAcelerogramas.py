@@ -29,24 +29,54 @@ def ventana_tukey_manual(N, alpha=0.1):
     return window
 
 def taper_y_filtro(x, sos, taper_pct, n_pad=0):
-    """Taper (taper_pct % por extremo) -> relleno de ceros (n_pad puntos a cada lado) -> filtro de fase cero."""
+    """Taper (taper_pct % por extremo) -> relleno de ceros -> filtro de fase cero."""
     x = x * ventana_tukey_manual(len(x), alpha=2.0 * taper_pct / 100.0)
     if n_pad > 0:
         z = np.zeros(n_pad)
         x = np.concatenate([z, x, z])
     return sosfiltfilt(sos, x)
 
-def guardar_grafica_comparativa(tiempo_orig, acc_orig, tiempo_filt, acc_filt, nombre_canal, output_folder):
-    """Genera y guarda una imagen comparativa entre la señal cruda y la filtrada/recortada."""
-    plt.figure(figsize=(10, 5))
-    plt.plot(tiempo_orig, acc_orig, color='gray', alpha=0.6, label='Crudo (Original)', linewidth=0.8)
-    plt.plot(tiempo_filt, acc_filt, color='#1f77b4', alpha=0.9, label='Filtrado y Sincronizado', linewidth=1.0)
-    plt.title(f"Comparativa de Acelerograma: {nombre_canal}", fontsize=12, fontweight='bold')
-    plt.xlabel("Tiempo (s)", fontsize=10)
-    plt.ylabel("Aceleración ($cm/s^2$)", fontsize=10)
-    plt.axhline(0, color='black', linewidth=0.5, linestyle='--')
-    plt.legend(loc='upper right', frameon=True)
-    plt.grid(True, linestyle=':', alpha=0.6)
+def guardar_grafica_comparativa(tiempo_orig, acc_orig, tiempo_graf, acc_filt, nombre_canal, output_folder, dt):
+    """Genera y guarda una imagen comparativa con 3 subplots: Aceleración, Velocidad y Desplazamiento."""
+    # Calcular velocidad y desplazamiento por integración numérica (cumsum * dt)
+    # Para la señal original
+    v_orig = np.cumsum(acc_orig) * dt
+    d_orig = np.cumsum(v_orig) * dt
+    
+    # Para la señal filtrada/recortada
+    v_filt = np.cumsum(acc_filt) * dt
+    d_filt = np.cumsum(v_filt) * dt
+
+    fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=False)
+    
+    # 1. Subplot: Aceleración
+    axes[0].plot(tiempo_orig, acc_orig, color='gray', alpha=0.6, label='Crudo (Original)', linewidth=0.8)
+    axes[0].plot(tiempo_graf, acc_filt, color='#1f77b4', alpha=0.9, label='Filtrado y Sincronizado', linewidth=1.0)
+    axes[0].set_title(f"Aceleración - {nombre_canal}", fontsize=11, fontweight='bold')
+    axes[0].set_ylabel("Accel ($cm/s^2$)", fontsize=9)
+    axes[0].axhline(0, color='black', linewidth=0.5, linestyle='--')
+    axes[0].legend(loc='upper right', frameon=True, fontsize=8)
+    axes[0].grid(True, linestyle=':', alpha=0.6)
+    
+    # 2. Subplot: Velocidad
+    axes[1].plot(tiempo_orig, v_orig, color='gray', alpha=0.6, label='Crudo (Original)', linewidth=0.8)
+    axes[1].plot(tiempo_graf, v_filt, color='#ff7f0e', alpha=0.9, label='Filtrado y Sincronizado', linewidth=1.0)
+    axes[1].set_title(f"Velocidad - {nombre_canal}", fontsize=11, fontweight='bold')
+    axes[1].set_ylabel("Vel ($cm/s$)", fontsize=9)
+    axes[1].axhline(0, color='black', linewidth=0.5, linestyle='--')
+    axes[1].legend(loc='upper right', frameon=True, fontsize=8)
+    axes[1].grid(True, linestyle=':', alpha=0.6)
+    
+    # 3. Subplot: Desplazamiento
+    axes[2].plot(tiempo_orig, d_orig, color='gray', alpha=0.6, label='Crudo (Original)', linewidth=0.8)
+    axes[2].plot(tiempo_graf, d_filt, color='#2ca02c', alpha=0.9, label='Filtrado y Sincronizado', linewidth=1.0)
+    axes[2].set_title(f"Desplazamiento - {nombre_canal}", fontsize=11, fontweight='bold')
+    axes[2].set_xlabel("Tiempo (s)", fontsize=9)
+    axes[2].set_ylabel("Disp ($cm$)", fontsize=9)
+    axes[2].axhline(0, color='black', linewidth=0.5, linestyle='--')
+    axes[2].legend(loc='upper right', frameon=True, fontsize=8)
+    axes[2].grid(True, linestyle=':', alpha=0.6)
+    
     plt.tight_layout()
     plt.savefig(os.path.join(output_folder, f"{nombre_canal}_comparativa.png"), dpi=300)
     plt.close()
@@ -70,7 +100,6 @@ def procesar_y_filtrar_acelerogramas():
     ORDEN_FILTRO = 4
     IA_INF = 0.01
     IA_SUP = 99.90
-    # Relleno de ceros a cada lado (Boore, 2005): T_pad = 1.5 * orden / f_min  -> 60 s
     T_PAD = 1.5 * ORDEN_FILTRO / F_MIN
 
     archivos_prof_intermedia = [f"Acelerograma_ProfIntermedia_{i}_.txt" for i in range(1, 5)]
@@ -136,11 +165,10 @@ def procesar_y_filtrar_acelerogramas():
 
         sos = butter_bandpass(F_MIN, F_MAX, fs, order=ORDEN_FILTRO)
 
-        # 2. PASADA 1 (solo para ubicar la ventana): taper + filtro sobre el registro completo
-        #    y Arias COMBINADA (H1 + H2) -> mismos índices de recorte para ambas componentes.
+        # 2. PASADA 1 (ubicación de ventana por Arias Combinada)
         h1_tmp = taper_y_filtro(h1, sos, TAPER_PCT)
         h2_tmp = taper_y_filtro(h2, sos, TAPER_PCT)
-        g = 981.0  # cm/s^2
+        g = 981.0
         ia_combinada = (np.pi / (2.0 * g)) * np.cumsum(h1_tmp ** 2 + h2_tmp ** 2) * dt
         ia_total = ia_combinada[-1]
 
@@ -149,18 +177,15 @@ def procesar_y_filtrar_acelerogramas():
             idx_ini = np.argmax(ia_norm >= (IA_INF / 100.0))
             idx_fin = np.argmax(ia_norm >= (IA_SUP / 100.0))
             if idx_fin <= idx_ini:
-                idx_ini, idx_fin = 0, n_puntos - 1
+                idx_fin = n_puntos - 1
         else:
             idx_ini, idx_fin = 0, n_puntos - 1
 
-        # 3. PASADA 2 (la definitiva): recortar el registro ORIGINAL con esa ventana y DESPUÉS
-        #    aplicar taper + ceros + filtro. Así la señal arranca y termina en cero, y la
-        #    velocidad y el desplazamiento finales tienden a cero (sin deriva).
+        # 3. PASADA 2 (recorte + padding Boore)
         n_pad = int(round(T_PAD / dt))
         h1_final = taper_y_filtro(h1[idx_ini:idx_fin + 1], sos, TAPER_PCT, n_pad)
         h2_final = taper_y_filtro(h2[idx_ini:idx_fin + 1], sos, TAPER_PCT, n_pad)
         tiempo_final = np.arange(len(h1_final)) * dt
-        # tiempo para graficar alineado con el registro original
         tiempo_graf = tiempo_final + idx_ini * dt - n_pad * dt
 
         clean_base = base_name.rstrip('_')
@@ -173,10 +198,10 @@ def procesar_y_filtrar_acelerogramas():
         np.savetxt(os.path.join(output_folder_filtrados, f"{func_name_h2}.txt"),
                    np.column_stack((tiempo_final, h2_final)), fmt="%.6e", delimiter="\t", header=header_filt, comments="")
 
-        guardar_grafica_comparativa(tiempo_orig, h1, tiempo_graf, h1_final, func_name_h1, output_folder_filtrados)
-        guardar_grafica_comparativa(tiempo_orig, h2, tiempo_graf, h2_final, func_name_h2, output_folder_filtrados)
+        # Generar gráficas con 3 subplots (Aceleración, Velocidad, Desplazamiento)
+        guardar_grafica_comparativa(tiempo_orig, h1, tiempo_graf, h1_final, func_name_h1, output_folder_filtrados, dt)
+        guardar_grafica_comparativa(tiempo_orig, h2, tiempo_graf, h2_final, func_name_h2, output_folder_filtrados, dt)
 
-        # Verificación rápida de deriva (velocidad y desplazamiento al final del registro)
         v = np.cumsum(h1_final) * dt
         u = np.cumsum(v) * dt
         print(f"[{base_name}] ventana {idx_ini*dt:.2f}-{idx_fin*dt:.2f} s | duración final {tiempo_final[-1]:.1f} s | "
@@ -191,11 +216,6 @@ def procesar_y_filtrar_acelerogramas():
     except Exception as e:
         print(f"\n[ERROR CRÍTICO al generar el Excel de ETABS]: {e}")
 
-# ---------------------------------------------------------------------------
-# generar_excel_etabs_completo: SIN CAMBIOS respecto a tu versión
-# (Number Steps y Step Size se leen de los archivos, así que se ajustan solos
-#  a la nueva duración)
-# ---------------------------------------------------------------------------
 def generar_excel_etabs_completo(folder_filtrados):
     SF_SUBDUCCION = 1.05
     SF_PROF_INTERMEDIA = 1.6
